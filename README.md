@@ -1,4 +1,5 @@
-# Firewall Parallel Processing - README
+# Firewall Parallel Processing
+### Andrei-Bogdan Marinescu
 
 ## Overview
 This project implements a multithreaded firewall simulation using a producer-consumer architecture. A producer thread generates packets (containing a mock source, destination, timestamp, and payload) and stores them in a shared circular buffer. Multiple consumer threads retrieve these packets, apply filtering logic, and log the final DROP/PASS decisions.
@@ -56,10 +57,26 @@ To remove compiled files:
 make clean
 ```
 
-## Notes
-- No busy waiting is allowed (no infinite `while()` loops or sleeps)
-- The serial reference implementation is provided in `src/serial.c`
+## Synchronization Strategy
+This implementation uses two distinct synchronization layers:
 
-## Author
-Andrei-Bogdan Marinescu
+### 1. Ring Buffer (Producer ↔ Consumers)
+The ring buffer uses:
+- **`ring->mutex`** to protect shared state (`len`, `read_pos`, `write_pos`)
+- **`empty_cond`** condition variable
+  - Consumers wait when the buffer is empty
+  - Producer signals when new packets become available
+- **`full_cond`** condition variable
+  - Producer waits when the buffer is full
+  - Consumers signal when space becomes available
 
+This ensures no busy waiting and correct FIFO ordering at the buffer level.
+
+### 2. Timestamp-Ordered Logging Between Consumers
+Multiple consumer threads could finish processing packets in parallel, but the log must remain sorted by timestamp (input order). To guarantee this:
+- The consumers use a **separate mutex** (`ctx->mutex`) to coordinate logging
+- Each dequeue returns a logical index (`res`)
+- A consumer may only write its result when `curr_write_ind == res`
+- Other consumers wait on `time_cond` until it is their turn
+
+This enforces strictly sequential writes to the log file while still allowing concurrent packet processing.
